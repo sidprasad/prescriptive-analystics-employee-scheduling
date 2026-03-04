@@ -38,7 +38,7 @@ for f in $inputFolder*.*
 do
 	fullFileName=$(realpath "$f")
 	echo "Running $fullFileName"
-	timeout $timeLimit ./run.sh $fullFileName > output.tmp
+	timeout $timeLimit ./run.sh $fullFileName $timeLimit > output.tmp
 	returnValue="$?"
 	if [[ "$returnValue" = 0 ]]; then 					# Run is successful
 		cat output.tmp | tail -1 >> $logFile				# Record the last line as solution
