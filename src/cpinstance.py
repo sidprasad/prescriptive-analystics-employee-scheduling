@@ -96,32 +96,26 @@ class CPInstance:
         HOURS_PER_DAY = self.numIntervalsInDay
         DAYS_PER_WEEK = 7
 
-        # Other truths that are sort of enforced by the problem spec.
-        DAY_SHIFT_START = 8  # first work shift always begins at 08:00
-
         OFF_SHIFT = 0  # shift label for "off" shift; the remaining numShifts-1 labels are for actual work shifts.
 
-        # Build shift windows: Its hard to be generic with these, since 
-        # we have specific claims about 'night' shift and ''day shift''
-        # Work shifts cycle starting from 08:00 so that:
-        #.  shift 0 = off.
-        #   shift 1 = day      08:00 – 16:00 ## TODO: How do we make DAY GENERIC?
-        #   shift 2 = evening  16:00 – 00:00  
-        #   shift 3 = night    00:00 – 08:00
+        # Shift windows per the handout (matching input file shift numbering):
+        #   shift 0 = off
+        #   shift 1 = night    [00:00, 08:00)
+        #   shift 2 = day      [08:00, 16:00)
+        #   shift 3 = evening  [16:00, 24:00)
 
-        # shift 0 is "off"; the remaining numShifts-1 are the actual work shifts.
         num_work_shifts = self.numShifts - 1
         if num_work_shifts <= 0:
             raise ValueError("Expected at least one working shift in addition to the off shift.")
-        if HOURS_PER_DAY % num_work_shifts != 0: 
+        if HOURS_PER_DAY % num_work_shifts != 0:
             raise ValueError("Working shifts must partition the day into equal-length slots.")
 
         hours_per_shift_slot = HOURS_PER_DAY // num_work_shifts
 
-        ## Shift windows is a list of the start and end times for each shift, indexed by shift label.
+        # Build shift windows starting from 00:00 so shift 1=night, 2=day, 3=evening.
         shift_windows = [(0, 0)]  # shift 0: off
         for shift_idx in range(num_work_shifts):
-            start = (DAY_SHIFT_START + shift_idx * hours_per_shift_slot) % HOURS_PER_DAY
+            start = shift_idx * hours_per_shift_slot
             end = start + hours_per_shift_slot
             shift_windows.append((start, end))
         
@@ -195,10 +189,8 @@ class CPInstance:
             for d in days:
                 self.solver.Add(shift_var[e][d] == shift_of[e][d])
 
-        # The night shift is the last work shift (window starting at 00:00, index = num_work_shifts).
-        ## THis is an attempt to be generic about the night shift. However, we still have
-        ## other hard coded claims, so I'm dubious about how much this actually helps with generality.
-        NIGHT_SHIFT = num_work_shifts
+        # Night shift is always shift 1 per the handout.
+        NIGHT_SHIFT = 1
 
 
         # constraints
@@ -267,13 +259,22 @@ class CPInstance:
             )
             self.solver.Add(total_nights <= self.maxTotalNightShift)
 
-        # Search phase: assign all daily shift options.
-        all_vars = [daily_assignment[e][d] for e in employees for d in days]
-        db = self.solver.Phase(
-            all_vars,
+        # Search phase 1: fix training days (0..numShifts-1) first — these have
+        # the AllDifferent constraint and are the most constrained.
+        training_vars = [daily_assignment[e][d] for e in employees for d in range(self.numShifts)]
+        phase1 = self.solver.Phase(
+            training_vars,
             self.solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
             self.solver.ASSIGN_RANDOM_VALUE,
         )
+        # Search phase 2: assign remaining days.
+        remaining_vars = [daily_assignment[e][d] for e in employees for d in range(self.numShifts, self.numDays)]
+        phase2 = self.solver.Phase(
+            remaining_vars,
+            self.solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
+            self.solver.ASSIGN_RANDOM_VALUE,
+        )
+        db = self.solver.Compose([phase1, phase2])
 
         # Luby restarts: the solver periodically abandons the current search tree and
         # restarts with a fresh random seed.
