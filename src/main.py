@@ -28,9 +28,16 @@ def main():
     resultdict["Instance"] = filename
     resultdict["Time"] = round(timer.getTime(), 2)
     resultdict["Result"] = str(n_fails)
-    resultdict["Solution"] = schedule 
-    # feel free to return a different format for schedule from instance.solve
-    # but make sure the Solution matches the format in the handout!
+    # Format: flat space-separated string of begin end pairs, employee by employee, day by day
+    if is_solution and schedule:
+        parts = []
+        for e in range(len(schedule)):
+            for d in range(len(schedule[e])):
+                parts.append(str(schedule[e][d][0]))
+                parts.append(str(schedule[e][d][1]))
+        resultdict["Solution"] = " ".join(parts)
+    else:
+        resultdict["Solution"] = ""
 
     # Pretty prints solution, uncomment to use
     # if is_solution:
