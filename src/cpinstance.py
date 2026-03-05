@@ -14,8 +14,7 @@ class CPInstance:
     numDays: int
     numEmployees: int
     numShifts: int  ## The off shift is denoted by 0 while work shifts, night, day, and evening are denoted by 1, 2, and 3 respectively. 
-    numIntervalsInDay: int ## In general the problem is for 3 intervals in a day (08:00 - 16:00, 16:00 - 00:00, and 00:00 - 08:00) but we want to be able to handle more general cases.
-                            ## Notice that if the employee finished at 14:00, it would still count as a day shift.
+    numIntervalsInDay: int 
     minDemandDayShift: list[list[int]]  ## e.g. minDemandDayShift[d][s] = 2 means that on day d at least 2 employees should be working shift s.
     minDailyOperation: int  ## a minimum demand needs to be met to ensure the daily operation for every day when considering all employees and shifts.
     
@@ -93,8 +92,8 @@ class CPInstance:
         Employee Scheduling Model 
         """
         
-        # Immutable truths.
-        HOURS_PER_DAY = 24
+        # Configuration-driven granularity (e.g. 24 = hourly intervals).
+        HOURS_PER_DAY = self.numIntervalsInDay
         DAYS_PER_WEEK = 7
 
         # Other truths that are sort of enforced by the problem spec.
@@ -229,39 +228,12 @@ class CPInstance:
 
         ### Training Phase Constraints ###
 
-        # Each employee has a training_start day; their training spans numShifts consecutive days.
-        # During training, each shift label appears exactly once (AllDifferent).
-        training_start = [
-            self.solver.IntVar(0, self.numDays - self.numShifts, f"train_start_{e}")
-            for e in employees
-        ]
-
+        # Training phase: the first numShifts days (days 0..numShifts-1) are the
+        # training period for ALL employees. Each employee must see each shift
+        # label exactly once across those days (including the off shift).
         for e in employees:
-            training_shift_vars = []
-            for k in range(self.numShifts):
-                # The actual day for training offset k
-                day_var = self.solver.IntVar(0, self.numDays - 1, f"train_day_{e}_{k}")
-                self.solver.Add(day_var == training_start[e] + k)
-                # Look up the shift label on that day using the IntVar array
-                train_shift = self.solver.Element(shift_var[e], day_var)
-                training_shift_vars.append(train_shift)
+            training_shift_vars = [shift_var[e][d] for d in range(self.numShifts)]
             self.solver.Add(self.solver.AllDifferent(training_shift_vars))
-
-        # Symmetry breaking: employees are interchangeable, so we impose an ordering
-        # on training start days.
-        for e in range(self.numEmployees - 1):
-            self.solver.Add(training_start[e] <= training_start[e + 1])
-
-        # Employees cannot work before their training starts — must be off shift.
-        ## TODO: Is OFF shift the right choice? It feels like they shouldnt be scheduled AT ALL?
-        for e in employees:
-            for d in days:
-                # If d < training_start[e], force off shift.
-                # (d < training_start[e]) is rewritten as (training_start[e] > d),
-                # which is a 0/1 boolean expression. We use it to imply shift must be OFF_SHIFT.
-                self.solver.Add(
-                    (shift_of[e][d] == OFF_SHIFT) >= (training_start[e] > d)
-                )
         ### Employee Constraints ###
 
         # Max daily work hours: already enforced structurally — only options with
@@ -295,21 +267,13 @@ class CPInstance:
             )
             self.solver.Add(total_nights <= self.maxTotalNightShift)
 
-        # Search phase: decide training start days first, then assign shifts.
-        # Phase 1: fix when each employee's training begins (most constrained).
-        phase1 = self.solver.Phase(
-            training_start,
-            self.solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
-            self.solver.ASSIGN_MIN_VALUE,
-        )
-        # Phase 2: assign all daily shift options.
+        # Search phase: assign all daily shift options.
         all_vars = [daily_assignment[e][d] for e in employees for d in days]
-        phase2 = self.solver.Phase(
+        db = self.solver.Phase(
             all_vars,
             self.solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
             self.solver.ASSIGN_RANDOM_VALUE,
         )
-        db = self.solver.Compose([phase1, phase2])
 
         # Luby restarts: the solver periodically abandons the current search tree and
         # restarts with a fresh random seed.
