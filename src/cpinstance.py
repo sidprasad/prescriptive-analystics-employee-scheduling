@@ -104,11 +104,9 @@ class CPInstance:
 
         # Build shift windows: Its hard to be generic with these, since 
         # we have specific claims about 'night' shift and ''day shift''
-        #  Maybe the night shift is the ''last'' work shift, 
-        # so we can just build the shifts in order and then label the last one as night.
         # Work shifts cycle starting from 08:00 so that:
         #.  shift 0 = off.
-        #   shift 1 = day      08:00 – 16:00
+        #   shift 1 = day      08:00 – 16:00 ## TODO: How do we make DAY GENERIC?
         #   shift 2 = evening  16:00 – 00:00  
         #   shift 3 = night    00:00 – 08:00
 
@@ -178,10 +176,6 @@ class CPInstance:
             # solver.Element(table, index_var) creates an IntExpr whose value equals table[index_var].
             # This "looks up" attributes of the chosen option inside the CP model.
             return self.solver.Element(table, var)
-
-        # Derived IntExpr grids — these are solver expressions, not Python values.
-        # Constraints can use them directly; .Value() extracts the concrete value after solving.
-
 
         ## shift_of[employee][day] is the shift label for that employee and day.
         shift_of = [[elem(option_shift, daily_assignment[e][d]) for d in days] for e in employees]
@@ -325,10 +319,9 @@ class CPInstance:
 
 
         # Wire in wall-clock time limit.
-        # solver.TimeLimit(ms) returns a SearchLimit that halts the search once the budget is exceeded.
         limits = [restart]
         if time_limit_seconds is not None:
-            limits.append(self.solver.TimeLimit(int(time_limit_seconds * 1000)))
+            limits.append(self.solver.TimeLimit(int(time_limit_seconds * 1000))) # Max?
         self.solver.NewSearch(db, limits)
 
         if self.solver.NextSolution():
@@ -340,7 +333,7 @@ class CPInstance:
                 ]
                 for e in employees
             ]
-            self.solver.EndSearch()  # release solver memory
+            self.solver.EndSearch()
             return True, self.solver.Failures(), schedule
         else:
             self.solver.EndSearch()
