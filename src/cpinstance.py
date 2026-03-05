@@ -254,13 +254,12 @@ class CPInstance:
             self.solver.Add(self.solver.AllDifferent(training_shift_vars))
 
         # Symmetry breaking: employees are interchangeable, so we impose an ordering
-        # on training start days. This eliminates redundant relabellings without
-        # cutting any feasible solutions.
+        # on training start days.
         for e in range(self.numEmployees - 1):
             self.solver.Add(training_start[e] <= training_start[e + 1])
 
         # Employees cannot work before their training starts — must be off shift.
-        ## Is OFF shift the right choice?
+        ## TODO: Is OFF shift the right choice? It feels like they shouldnt be scheduled AT ALL?
         for e in employees:
             for d in days:
                 # If d < training_start[e], force off shift.
@@ -319,9 +318,8 @@ class CPInstance:
         db = self.solver.Compose([phase1, phase2])
 
         # Luby restarts: the solver periodically abandons the current search tree and
-        # restarts with a fresh random seed. The Luby sequence (1,1,2,1,1,2,4,...) scales
-        # the restart threshold geometrically, avoiding both premature restarts and
-        # getting stuck in one bad subtree indefinitely.
+        # restarts with a fresh random seed.
+        ## TODO: Explore other restart strategies? Any citations on good restart starts?
         restart = self.solver.LubyRestart(100)  # base unit = 100 failures
 
 
@@ -334,9 +332,6 @@ class CPInstance:
         self.solver.NewSearch(db, limits)
 
         if self.solver.NextSolution():
-            # daily_assignment[e][d] is an IntVar, so .Value() works fine.
-            # Use that index to look up begin/end directly from the Python option lists —
-            # solver.Element returns an IntExpr which has no .Value() method.
             schedule = [
                 [
                     (option_begin[daily_assignment[e][d].Value()],
