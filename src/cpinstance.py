@@ -337,7 +337,7 @@ class CPInstance:
             return True, self.solver.Failures(), schedule
         else:
             self.solver.EndSearch()
-            return False, self.solver.Failures(), None
+            return False, self.solver.Failures(), []
             
 
     def prettyPrint(self, numEmployees, numDays, sched):
