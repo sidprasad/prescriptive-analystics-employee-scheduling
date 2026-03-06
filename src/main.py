@@ -36,8 +36,6 @@ def main():
                 parts.append(str(schedule[e][d][0]))
                 parts.append(str(schedule[e][d][1]))
         resultdict["Solution"] = " ".join(parts)
-    else:
-        resultdict["Solution"] = ""
 
     # Pretty prints solution, uncomment to use
     # if is_solution:

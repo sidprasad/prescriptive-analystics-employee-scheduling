@@ -15,7 +15,7 @@ class CPInstance:
     numEmployees: int
     numShifts: int  ## The off shift is denoted by 0 while work shifts, night, day, and evening are denoted by 1, 2, and 3 respectively. 
     numIntervalsInDay: int 
-    minDemandDayShift: list[list[int]]  ## e.g. minDemandDayShift[d][s] = 2 means that on day d at least 2 employees should be working shift s.
+    minDemandDayShift: list[list[int]]  ## e.g. minDemandDayShift[d][s] = 2 means that on day d at least 2 employees should be working day shift s.
     minDailyOperation: int  ## a minimum demand needs to be met to ensure the daily operation for every day when considering all employees and shifts.
     
 
@@ -197,13 +197,13 @@ class CPInstance:
 
         #### Business Constraints ###
 
-        # Each shift on each day must have at least the minimum required number of employees.
+        # Each DAY shift on each day must have at least the minimum required number of employees.
 
         for d in days:
             for s in shifts:
                 demand = self.minDemandDayShift[d][s] ## We assume this encodes something about off?
                 ## TODO: WHat if demand IS 0? What should we do?
-                if demand > 0:
+                if demand >= 0:
                     # IsEqualCstVar returns a 0/1 IntVar that is 1 iff shift_of[e][d] == s,
                     # so Sum(...) counts how many employees are on shift s on day d.
                     count = self.solver.Sum(
@@ -220,9 +220,9 @@ class CPInstance:
 
         ### Training Phase Constraints ###
 
-        # Training phase: the first numShifts days (days 0..numShifts-1) are the
-        # training period for ALL employees. Each employee must see each shift
-        # label exactly once across those days (including the off shift).
+        ## I'm a little confused by how to interpret training period. Here's what I *think* it is.
+        # Training phase: the first numShifts days are the training period for ALL employees.
+        # Each employee must see each shift label exactly once across those days (including the off shift).
         for e in employees:
             training_shift_vars = [shift_var[e][d] for d in range(self.numShifts)]
             self.solver.Add(self.solver.AllDifferent(training_shift_vars))
