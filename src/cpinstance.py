@@ -242,39 +242,37 @@ class CPInstance:
                 self.solver.Add(weekly_hours <= self.maxWeeklyWork)
                 self.solver.Add(weekly_hours >= self.minWeeklyWork)
 
+        # Pre-compute night-shift indicator variables once and reuse them
+        # across both the consecutive and total night-shift constraints.
+        is_night = [
+            [self.solver.IsEqualCstVar(shift_of[e][d], NIGHT_SHIFT) for d in days]
+            for e in employees
+        ]
+
         # Sliding window of width (maxConsecutiveNightShift + 1) days: at most
         # maxConsecutiveNightShift of those days can be night shifts.
         for e in employees:
             for d in range(self.numDays - self.maxConsecutiveNightShift):
                 consec_nights = self.solver.Sum(
-                    [self.solver.IsEqualCstVar(shift_of[e][d + k], NIGHT_SHIFT)
+                    [is_night[e][d + k]
                      for k in range(self.maxConsecutiveNightShift + 1)]
                 )
                 self.solver.Add(consec_nights <= self.maxConsecutiveNightShift)
 
         # Max total night shifts.
         for e in employees:
-            total_nights = self.solver.Sum(
-                [self.solver.IsEqualCstVar(shift_of[e][d], NIGHT_SHIFT) for d in days]
-            )
+            total_nights = self.solver.Sum(is_night[e])
             self.solver.Add(total_nights <= self.maxTotalNightShift)
 
-        # Search phase 1: fix training days (0..numShifts-1) first — these have
-        # the AllDifferent constraint and are the most constrained.
-        training_vars = [daily_assignment[e][d] for e in employees for d in range(self.numShifts)]
-        phase1 = self.solver.Phase(
-            training_vars,
+        # Single search phase: let the CHOOSE_MIN_SIZE_LOWEST_MIN heuristic
+        # pick the most constrained variables dynamically (training vars with
+        # AllDifferent will naturally be chosen first when their domains shrink).
+        all_vars = [daily_assignment[e][d] for e in employees for d in days]
+        db = self.solver.Phase(
+            all_vars,
             self.solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
             self.solver.ASSIGN_RANDOM_VALUE,
         )
-        # Search phase 2: assign remaining days.
-        remaining_vars = [daily_assignment[e][d] for e in employees for d in range(self.numShifts, self.numDays)]
-        phase2 = self.solver.Phase(
-            remaining_vars,
-            self.solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
-            self.solver.ASSIGN_RANDOM_VALUE,
-        )
-        db = self.solver.Compose([phase1, phase2])
 
         # Luby restarts: the solver periodically abandons the current search tree and
         # restarts with a fresh random seed.
