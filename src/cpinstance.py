@@ -89,219 +89,264 @@ class CPInstance:
         time_limit_seconds: Optional[float] = None,
     ):
         """
-        Employee Scheduling Model 
+        Two primary decision-variable matrices:
+          shiftOfEmployeeDay[e][d]    -- shift label in {0 .. numShifts-1}
+          durationOfEmployeeDay[e][d] -- hours worked in {0 .. maxDailyWork}
+
+        Invariant (correspondence):
+          shiftOfEmployeeDay[e][d] == OFF_SHIFT  ↔  durationOfEmployeeDay[e][d] == 0
+
+        Shift legend (per handout):
+          0 = off, 1 = night, 2 = day, 3 = evening
         """
-        
-        # Configuration-driven granularity (e.g. 24 = hourly intervals).
-        HOURS_PER_DAY = self.numIntervalsInDay
+        OFF_SHIFT   = 0
+        NIGHT_SHIFT = 1
         DAYS_PER_WEEK = 7
 
-        OFF_SHIFT = 0  # shift label for "off" shift; the remaining numShifts-1 labels are for actual work shifts.
-
-        # Shift windows per the handout (matching input file shift numbering):
-        #   shift 0 = off
-        #   shift 1 = night    [00:00, 08:00)
-        #   shift 2 = day      [08:00, 16:00)
-        #   shift 3 = evening  [16:00, 24:00)
-
-        num_work_shifts = self.numShifts - 1
-        if num_work_shifts <= 0:
-            raise ValueError("Expected at least one working shift in addition to the off shift.")
-        if HOURS_PER_DAY % num_work_shifts != 0:
-            raise ValueError("Working shifts must partition the day into equal-length slots.")
-
-        hours_per_shift_slot = HOURS_PER_DAY // num_work_shifts
-
-        # Build shift windows starting from 00:00 so shift 1=night, 2=day, 3=evening.
-        shift_windows = [(0, 0)]  # shift 0: off
-        for shift_idx in range(num_work_shifts):
-            start = shift_idx * hours_per_shift_slot
-            end = start + hours_per_shift_slot
-            shift_windows.append((start, end))
-        
         self.solver = pywrapcp.Solver("EmployeeScheduling")
+        solver = self.solver
 
-        # Index sets used throughout the model, so we don't have to write range(...) everywhere.
-        shifts = list(range(self.numShifts))
-        days = list(range(self.numDays))
+        shifts    = list(range(self.numShifts))
+        days      = list(range(self.numDays))
         employees = list(range(self.numEmployees))
 
-        # variables
+        # ------------------------------------------------------------------ #
+        # Decision variables                                                   #
+        # ------------------------------------------------------------------ #
 
-        # Expand each shift into all legal concrete assignments within its time window.
-        # Enumerate every legal (shift, begin, finish) triple upfront as a Python list.
-        # This pre-computation keeps the CP model small: the solver only sees one integer
-        # variable per (employee, day) instead of separate begin/end/hours variables.
-        # Each tuple is (shift_label, begin_hour, finish_hour, hours_worked).
-        # The off shift (s=0) has no time window so it gets the sentinel (-1, -1, 0).
-
-
-        # Flat lists indexed by option id — used as lookup tables inside Element constraints.
-        # solver.Element requires plain int lists, so we build four parallel arrays directly.
-        option_shift, option_begin, option_end, option_hours = [], [], [], []
-        for s in shifts:
-            if s == OFF_SHIFT:
-                option_shift.append(s); option_begin.append(-1); option_end.append(-1); option_hours.append(0)
-                continue
-
-            start, end = shift_windows[s]
-            for begin in range(start, end):
-                min_finish = begin + self.minConsecutiveWork
-                max_finish = min(begin + self.maxDailyWork, end)
-                for finish in range(min_finish, max_finish + 1):
-                    option_shift.append(s); option_begin.append(begin); option_end.append(finish); option_hours.append(finish - begin)
-
-        num_options = len(option_shift)
-
-        # Main decision variable: daily_assignment[employee][day] is an index into the option arrays.
-        # Choosing its value simultaneously fixes the shift label, start time, end time, and hours
-        # worked for employee e on day d.
-        daily_assignment = [
-            [
-                self.solver.IntVar(0, num_options - 1, f"assignment_{e}_{d}")
-                for d in days
-            ]
+        # shiftOfEmployeeDay[e][d]: which shift employee e works on day d.
+        shiftOfEmployeeDay = [
+            [solver.IntVar(0, self.numShifts - 1, f"shift_{e}_{d}") for d in days]
             for e in employees
         ]
 
-        # OR-Tools Element constraints to derive employee shift attributes from the decision variable.
-        def elem(table, var):
-            # solver.Element(table, index_var) creates an IntExpr whose value equals table[index_var].
-            # This "looks up" attributes of the chosen option inside the CP model.
-            return self.solver.Element(table, var)
-
-        ## shift_of[employee][day] is the shift label for that employee and day.
-        shift_of = [[elem(option_shift, daily_assignment[e][d]) for d in days] for e in employees]
-        ## begin_of[employee][day] is the start time for that employee and day.
-        begin_of = [[elem(option_begin, daily_assignment[e][d]) for d in days] for e in employees]
-        ## end_of[employee][day] is the finish time for that employee and day.
-        end_of   = [[elem(option_end,   daily_assignment[e][d]) for d in days] for e in employees]
-        ## hours_of[employee][day] is the hours worked for that employee and day.
-        hours_of = [[elem(option_hours, daily_assignment[e][d]) for d in days] for e in employees]
-
-        # IntVar copies of shift_of, needed because Element with a variable index
-        # requires an IntVar array (not IntExpr array).
-        shift_var = [
-            [self.solver.IntVar(0, self.numShifts - 1, f"shift_{e}_{d}") for d in days]
+        # durationOfEmployeeDay[e][d]: how many hours employee e works on day d.
+        # Domain is [0, maxDailyWork]; the correspondence constraint below further
+        # restricts it to 0 when off and [minConsecutiveWork, maxDailyWork] when working.
+        durationOfEmployeeDay = [
+            [solver.IntVar(0, self.maxDailyWork, f"dur_{e}_{d}") for d in days]
             for e in employees
         ]
+
+        # Correspondence: shiftOfEmployeeDay[e][d] == off  ↔  duration == 0  #
         for e in employees:
             for d in days:
-                self.solver.Add(shift_var[e][d] == shift_of[e][d])
+                is_off = solver.IsEqualCstVar(shiftOfEmployeeDay[e][d], OFF_SHIFT)
+                solver.Add(durationOfEmployeeDay[e][d] <= self.maxDailyWork * (1 - is_off))
+                solver.Add(durationOfEmployeeDay[e][d] >= self.minConsecutiveWork * (1 - is_off))
 
-        # Night shift is always shift 1 per the handout.
-        NIGHT_SHIFT = 1
+        # ------------------------------------------------------------------ #
+        # Business constraints                                                 #
+        # ------------------------------------------------------------------ #
 
-
-        # constraints
-
-        #### Business Constraints ###
-
-        # Each DAY shift on each day must have at least the minimum required number of employees.
-
+        # Min employees per shift per day via Global Cardinality (Distribute).
+        # For each day d, the column of shift variables must satisfy:
+        #   |{e : shiftOfEmployeeDay[e][d] == s}| >= minDemandDayShift[d][s]  for all s.
         for d in days:
-            for s in shifts:
-                demand = self.minDemandDayShift[d][s] ## We assume this encodes something about off?
-                ## TODO: WHat if demand IS 0? What should we do?
-                if demand >= 0:
-                    # IsEqualCstVar returns a 0/1 IntVar that is 1 iff shift_of[e][d] == s,
-                    # so Sum(...) counts how many employees are on shift s on day d.
-                    count = self.solver.Sum(
-                        [self.solver.IsEqualCstVar(shift_of[e][d], s) for e in employees]
-                    )
-                    self.solver.Add(count >= demand)
+            col       = [shiftOfEmployeeDay[e][d] for e in employees]
+            card_mins = [self.minDemandDayShift[d][s] for s in shifts]
+            card_maxs = [self.numEmployees] * self.numShifts
+            solver.Add(solver.Distribute(col, card_mins, card_maxs))
 
-        # Total hours worked by all employees on a given day must reach minDailyOperation.
-        ## employees assigned to the off shift have hours_of[e][d] == 0 for that day, so they don't contribute to the sum.
+        # Minimum total hours worked across all employees each day.
         for d in days:
-            self.solver.Add(
-                self.solver.Sum([hours_of[e][d] for e in employees]) >= self.minDailyOperation
+            solver.Add(
+                solver.Sum([durationOfEmployeeDay[e][d] for e in employees]) >= self.minDailyOperation
             )
 
-        ### Training Phase Constraints ###
-
-        ## I'm a little confused by how to interpret training period. Here's what I *think* it is.
-        # Training phase: the first numShifts days are the training period for ALL employees.
-        # Each employee must see each shift label exactly once across those days (including the off shift).
+        # ------------------------------------------------------------------ #
+        # Training phase: each employee sees every shift label exactly once   #
+        # across the first numShifts days (includes the off shift).           #
+        # ------------------------------------------------------------------ #
         for e in employees:
-            training_shift_vars = [shift_var[e][d] for d in range(self.numShifts)]
-            self.solver.Add(self.solver.AllDifferent(training_shift_vars))
-        ### Employee Constraints ###
+            training_vars = [shiftOfEmployeeDay[e][d] for d in range(self.numShifts)]
+            solver.Add(solver.AllDifferent(training_vars))
 
-        # Max daily work hours: already enforced structurally — only options with
-        # (finish - begin) <= maxDailyWork were added to assignment_options.
+        # ------------------------------------------------------------------ #
+        # Employee constraints                                                 #
+        # ------------------------------------------------------------------ #
 
-        # Weekly work hour bounds.
-        # Enforce weekly hour bounds for each complete 7-day week.
-        # Partial trailing weeks (if numDays % 7 != 0) are ignored.
+        # Weekly work-hour bounds for each complete 7-day week.
+        # Partial trailing weeks (numDays % 7 != 0) are ignored.
         num_full_weeks = self.numDays // DAYS_PER_WEEK
         for e in employees:
             for w in range(num_full_weeks):
-                week_days = list(range(w * DAYS_PER_WEEK, (w + 1) * DAYS_PER_WEEK))
-                weekly_hours = self.solver.Sum([hours_of[e][d] for d in week_days])
-                self.solver.Add(weekly_hours <= self.maxWeeklyWork)
-                self.solver.Add(weekly_hours >= self.minWeeklyWork)
+                week_days    = list(range(w * DAYS_PER_WEEK, (w + 1) * DAYS_PER_WEEK))
+                weekly_hours = solver.Sum([durationOfEmployeeDay[e][d] for d in week_days])
+                solver.Add(weekly_hours >= self.minWeeklyWork)
+                solver.Add(weekly_hours <= self.maxWeeklyWork)
 
-        # Pre-compute night-shift indicator variables once and reuse them
-        # across both the consecutive and total night-shift constraints.
-        is_night = [
-            [self.solver.IsEqualCstVar(shift_of[e][d], NIGHT_SHIFT) for d in days]
-            for e in employees
-        ]
-
-        # Sliding window of width (maxConsecutiveNightShift + 1) days: at most
-        # maxConsecutiveNightShift of those days can be night shifts.
+        # Consecutive night-shift limit.
+        # A night shift on day d implies no night shifts on days d+1 .. d+maxConsecutiveNightShift.
+        # Equivalently: in any window of (maxConsecutiveNightShift + 1) consecutive days,
+        # at most maxConsecutiveNightShift can be night shifts.
         for e in employees:
             for d in range(self.numDays - self.maxConsecutiveNightShift):
-                consec_nights = self.solver.Sum(
-                    [is_night[e][d + k]
-                     for k in range(self.maxConsecutiveNightShift + 1)]
-                )
-                self.solver.Add(consec_nights <= self.maxConsecutiveNightShift)
+                window = [
+                    solver.IsEqualCstVar(shiftOfEmployeeDay[e][d + k], NIGHT_SHIFT)
+                    for k in range(self.maxConsecutiveNightShift + 1)
+                ]
+                solver.Add(solver.Sum(window) <= self.maxConsecutiveNightShift)
 
-        # Max total night shifts.
+        # Total night-shift cap per employee.
         for e in employees:
-            total_nights = self.solver.Sum(is_night[e])
-            self.solver.Add(total_nights <= self.maxTotalNightShift)
+            is_night = [solver.IsEqualCstVar(shiftOfEmployeeDay[e][d], NIGHT_SHIFT) for d in days]
+            solver.Add(solver.Sum(is_night) <= self.maxTotalNightShift)
 
-        # Single search phase: let the CHOOSE_MIN_SIZE_LOWEST_MIN heuristic
-        # pick the most constrained variables dynamically (training vars with
-        # AllDifferent will naturally be chosen first when their domains shrink).
-        all_vars = [daily_assignment[e][d] for e in employees for d in days]
-        db = self.solver.Phase(
+
+
+
+        # Branch on shift variables first (they carry all the structural constraints),
+        # then on duration variables to complete the assignment.
+        all_vars = (
+            [shiftOfEmployeeDay[e][d]    for e in employees for d in days]
+            + [durationOfEmployeeDay[e][d] for e in employees for d in days]
+        )
+        db = solver.Phase(
             all_vars,
-            self.solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
-            self.solver.ASSIGN_RANDOM_VALUE,
+            solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
+            solver.ASSIGN_RANDOM_VALUE,
         )
 
-        # Luby restarts: the solver periodically abandons the current search tree and
-        # restarts with a fresh random seed.
-        ## TODO: Explore other restart strategies? Any citations on good restart starts?
-        restart = self.solver.LubyRestart(100)  # base unit = 100 failures
+        # Luby restarts with a base unit of 100 failures.
+        restart = solver.LubyRestart(100)
 
-
-
-        # Wire in wall-clock time limit.
         limits = [restart]
         if time_limit_seconds is not None:
-            limits.append(self.solver.TimeLimit(int(time_limit_seconds * 1000))) # Max?
-        self.solver.NewSearch(db, limits)
+            limits.append(solver.TimeLimit(int(time_limit_seconds * 1000)))
+        solver.NewSearch(db, limits)
 
-        if self.solver.NextSolution():
+        if solver.NextSolution():
+            hours_per_slot = self.numIntervalsInDay // (self.numShifts - 1)
+            shift_start = {0: -1}  # off: sentinel, consistent with what prettyPrint expects
+            for s in range(1, self.numShifts):
+                shift_start[s] = (s - 1) * hours_per_slot
+
             schedule = [
                 [
-                    (option_begin[daily_assignment[e][d].Value()],
-                     option_end[daily_assignment[e][d].Value()])
+                    (
+                        lambda s, dur: (-1, -1) if s == OFF_SHIFT
+                        else (shift_start[s], shift_start[s] + dur)
+                    )(shiftOfEmployeeDay[e][d].Value(), durationOfEmployeeDay[e][d].Value())
                     for d in days
                 ]
                 for e in employees
             ]
-            self.solver.EndSearch()
-            return True, self.solver.Failures(), schedule
+            solver.EndSearch()
+            return True, solver.Failures(), schedule
         else:
-            self.solver.EndSearch()
-            return False, self.solver.Failures(), []
-            
+            solver.EndSearch()
+            return False, solver.Failures(), []
+
+
+    def check_solution(self, sched: list) -> list[str]:
+        """
+        Verifies sched against every model constraint and returns a list of
+        violation strings.  An empty list means the solution is valid.
+
+        sched[e][d] = (begin, end) using the shift windows:
+          (-1, -1)           --> off  (shift 0)
+          (0,   0+dur)       --> night (shift 1)
+          (8,   8+dur)       --> day   (shift 2)
+          (16, 16+dur)       --> evening (shift 3)
+        """
+        violations = []
+
+        OFF_SHIFT   = 0
+        NIGHT_SHIFT = 1
+        DAYS_PER_WEEK = 7
+        hours_per_slot = self.numIntervalsInDay // (self.numShifts - 1)
+
+        def shift_of(e, d):
+            begin, _ = sched[e][d]
+            return OFF_SHIFT if begin == -1 else begin // hours_per_slot + 1
+
+        def duration_of(e, d):
+            begin, end = sched[e][d]
+            return 0 if begin == -1 else end - begin
+
+        employees = range(self.numEmployees)
+        days      = range(self.numDays)
+        shifts    = range(self.numShifts)
+
+        # Daily duration bounds
+        for e in employees:
+            for d in days:
+                dur = duration_of(e, d)
+                s   = shift_of(e, d)
+                if s == OFF_SHIFT:
+                    if dur != 0:
+                        violations.append(f"E{e+1} D{d}: off shift but duration={dur}")
+                else:
+                    if dur < self.minConsecutiveWork:
+                        violations.append(f"E{e+1} D{d}: duration {dur} < minConsecutiveWork {self.minConsecutiveWork}")
+                    if dur > self.maxDailyWork:
+                        violations.append(f"E{e+1} D{d}: duration {dur} > maxDailyWork {self.maxDailyWork}")
+
+        # Min employees per shift per day 
+        for d in days:
+            counts = {s: sum(1 for e in employees if shift_of(e, d) == s) for s in shifts}
+            for s in shifts:
+                demand = self.minDemandDayShift[d][s]
+                if counts[s] < demand:
+                    violations.append(
+                        f"D{d} shift {s}: {counts[s]} employees < demand {demand}"
+                    )
+
+        # Min daily operation 
+        for d in days:
+            total = sum(duration_of(e, d) for e in employees)
+            if total < self.minDailyOperation:
+                violations.append(
+                    f"D{d}: total hours {total} < minDailyOperation {self.minDailyOperation}"
+                )
+
+        # Training phase: AllDifferent across first numShifts days
+        for e in employees:
+            labels = [shift_of(e, d) for d in range(self.numShifts)]
+            if len(set(labels)) != self.numShifts:
+                violations.append(
+                    f"E{e+1} training phase: shift labels not all-different: {labels}"
+                )
+
+        # 5. Weekly work-hour bounds
+        num_full_weeks = self.numDays // DAYS_PER_WEEK
+        for e in employees:
+            for w in range(num_full_weeks):
+                week_days = range(w * DAYS_PER_WEEK, (w + 1) * DAYS_PER_WEEK)
+                total = sum(duration_of(e, d) for d in week_days)
+                if total < self.minWeeklyWork:
+                    violations.append(
+                        f"E{e+1} week {w}: {total}h < minWeeklyWork {self.minWeeklyWork}"
+                    )
+                if total > self.maxWeeklyWork:
+                    violations.append(
+                        f"E{e+1} week {w}: {total}h > maxWeeklyWork {self.maxWeeklyWork}"
+                    )
+
+        # Max consecutive night shifts
+        for e in employees:
+            for d in range(self.numDays - self.maxConsecutiveNightShift):
+                window = sum(
+                    1 for k in range(self.maxConsecutiveNightShift + 1)
+                    if shift_of(e, d + k) == NIGHT_SHIFT
+                )
+                if window > self.maxConsecutiveNightShift:
+                    violations.append(
+                        f"E{e+1} D{d}-D{d+self.maxConsecutiveNightShift}: "
+                        f"{window} consecutive nights > {self.maxConsecutiveNightShift}"
+                    )
+
+        # Max total night shifts
+        for e in employees:
+            total = sum(1 for d in days if shift_of(e, d) == NIGHT_SHIFT)
+            if total > self.maxTotalNightShift:
+                violations.append(
+                    f"E{e+1}: {total} total night shifts > maxTotalNightShift {self.maxTotalNightShift}"
+                )
+
+        return violations
+
 
     def prettyPrint(self, numEmployees, numDays, sched):
         """

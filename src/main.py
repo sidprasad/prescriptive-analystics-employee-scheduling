@@ -13,6 +13,11 @@ def main():
         default=None,
         help="Time limit in seconds (default: none)",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Verify the solution against all constraints after solving.",
+    )
     args = parser.parse_args()
 
     input_file = Path(args.input_file)
@@ -42,6 +47,15 @@ def main():
     #     instance.prettyPrint(instance.numEmployees, instance.numDays, schedule)
     #     instance.generateVisualizerInput(instance.numEmployees, instance.numDays, schedule)
     print(json.dumps(resultdict))
+
+    if args.check and is_solution:
+        violations = instance.check_solution(schedule)
+        if violations:
+            print(f"CHECKER: {len(violations)} violation(s) found:")
+            for v in violations:
+                print(f"  - {v}")
+        else:
+            print("CHECKER: solution is valid.")
 
 if __name__ == "__main__":
     main()
