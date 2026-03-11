@@ -4,7 +4,6 @@ from argparse import ArgumentParser
 from pathlib import Path
 from cpinstance import CPInstance
 from model_timer import Timer
-from analyze import analyze_solution
 
 def main():
     parser = ArgumentParser()
@@ -52,9 +51,9 @@ def main():
         resultdict["Solution"] = " ".join(parts)
 
     # Pretty prints solution, uncomment to use
-    # if is_solution:
-    #     instance.prettyPrint(instance.numEmployees, instance.numDays, schedule)
-    #     instance.generateVisualizerInput(instance.numEmployees, instance.numDays, schedule)
+    if is_solution:
+        # instance.prettyPrint(instance.numEmployees, instance.numDays, schedule)
+        instance.generateVisualizerInput(instance.numEmployees, instance.numDays, schedule)
     print(json.dumps(resultdict))
 
     if args.check and is_solution:
@@ -65,17 +64,6 @@ def main():
                 print(f"  - {v}", file=sys.stderr)
         else:
             print("CHECKER: solution is valid.", file=sys.stderr)
-
-
-    if is_solution:
-        analysis = analyze_solution(
-            schedule, filename,
-            instance.numEmployees, instance.numDays,
-            instance.numShifts, instance.numIntervalsInDay,
-        )
-        print(f"ANALYSIS: {len(analysis)} warning(s) emitted to warnings.json", file=sys.stderr)
-        for w in analysis:
-            print(f"  [{w['type']}] {w['message']}", file=sys.stderr)
 
 if __name__ == "__main__":
     main()

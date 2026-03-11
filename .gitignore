@@ -12,3 +12,6 @@ debug_perf.py
 *.tmp
 benchmark_results.md
 *.txt
+
+analyze.py
+analysis.ipynb
