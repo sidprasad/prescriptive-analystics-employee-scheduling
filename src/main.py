@@ -62,8 +62,6 @@ def main():
             print(f"CHECKER: {len(violations)} violation(s) found:", file=sys.stderr)
             for v in violations:
                 print(f"  - {v}", file=sys.stderr)
-        else:
-            print("CHECKER: solution is valid.", file=sys.stderr)
 
 if __name__ == "__main__":
     main()
