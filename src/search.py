@@ -66,7 +66,7 @@ class InterleavedSelector(pywrapcp.PyDecisionBuilder):
 
 
 def build_search(solver, shift_vars, duration_vars, num_shifts, max_daily_work,
-                 strategy="interleaved"):
+                 strategy="impact"):
     """
     Build a DecisionBuilder for the employee scheduling model.
 
@@ -85,9 +85,6 @@ def build_search(solver, shift_vars, duration_vars, num_shifts, max_daily_work,
                    (CHOOSE_MAX_AVERAGE_IMPACT + SELECT_MAX_IMPACT) and a
                    domain-aware fallback heuristic. Impact-based search learns
                    which variables/values cause the most propagation.
-
-    Returns (db, refs) where refs must be kept alive to prevent GC of
-    any Python DecisionBuilder (OR-Tools C++ does not prevent it).
     """
     if strategy == "twophase":
         phase_shifts = solver.Phase(
