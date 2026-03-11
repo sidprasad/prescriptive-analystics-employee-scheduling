@@ -1,8 +1,10 @@
 import json
+import sys
 from argparse import ArgumentParser
 from pathlib import Path
 from cpinstance import CPInstance
 from model_timer import Timer
+from analyze import analyze_solution
 
 def main():
     parser = ArgumentParser()
@@ -50,25 +52,30 @@ def main():
         resultdict["Solution"] = " ".join(parts)
 
     # Pretty prints solution, uncomment to use
-    if is_solution:
-        instance.prettyPrint(instance.numEmployees, instance.numDays, schedule)
-        instance.generateVisualizerInput(instance.numEmployees, instance.numDays, schedule)
+    # if is_solution:
+    #     instance.prettyPrint(instance.numEmployees, instance.numDays, schedule)
+    #     instance.generateVisualizerInput(instance.numEmployees, instance.numDays, schedule)
     print(json.dumps(resultdict))
 
     if args.check and is_solution:
         violations = instance.check_solution(schedule)
         if violations:
-            print(f"CHECKER: {len(violations)} violation(s) found:")
+            print(f"CHECKER: {len(violations)} violation(s) found:", file=sys.stderr)
             for v in violations:
-                print(f"  - {v}")
+                print(f"  - {v}", file=sys.stderr)
         else:
-            print("CHECKER: solution is valid.")
+            print("CHECKER: solution is valid.", file=sys.stderr)
+
 
     if is_solution:
-        analysis = instance.analyze_solution(schedule, filename)
-        print(f"ANALYSIS: {len(analysis)} warning(s) emitted to warnings.json")
+        analysis = analyze_solution(
+            schedule, filename,
+            instance.numEmployees, instance.numDays,
+            instance.numShifts, instance.numIntervalsInDay,
+        )
+        print(f"ANALYSIS: {len(analysis)} warning(s) emitted to warnings.json", file=sys.stderr)
         for w in analysis:
-            print(f"  [{w['type']}] {w['message']}")
+            print(f"  [{w['type']}] {w['message']}", file=sys.stderr)
 
 if __name__ == "__main__":
     main()
