@@ -9,6 +9,5 @@ build/
 *.sol.txt
 .DS_Store
 *.tmp
-*.txt
 *.ipynb
 analyze.py
