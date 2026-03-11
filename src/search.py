@@ -84,9 +84,7 @@ def build_search(solver, shift_vars, duration_vars, num_shifts, max_daily_work,
       "impact"     — OR-Tools DefaultPhase with tuned parameters
                    (CHOOSE_MAX_AVERAGE_IMPACT + SELECT_MAX_IMPACT) and a
                    domain-aware fallback heuristic. Impact-based search learns
-                   which variables/values cause the most propagation; when it
-                   has no strong signal, it falls back to our two-phase builder
-                   that deprioritises night shifts and assigns max durations.
+                   which variables/values cause the most propagation.
 
     Returns (db, refs) where refs must be kept alive to prevent GC of
     any Python DecisionBuilder (OR-Tools C++ does not prevent it).
@@ -113,8 +111,7 @@ def build_search(solver, shift_vars, duration_vars, num_shifts, max_daily_work,
         params.value_selection_schema = params.SELECT_MAX_IMPACT
 
         # Fallback heuristic: when impact scores don't differentiate,
-        # DefaultPhase delegates to this builder which encodes our domain
-        # insights — deprioritise night shifts and prefer max durations.
+        # DefaultPhase delegates to this builder.
         fallback_shifts = solver.Phase(
             shift_vars,
             solver.CHOOSE_MIN_SIZE_LOWEST_MIN,

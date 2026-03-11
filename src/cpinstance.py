@@ -185,10 +185,6 @@ class CPInstance:
             solver.Add(solver.Sum(is_night) <= self.maxTotalNightShift)
 
 
-
-
-
-
         shift_vars    = [shiftOfEmployeeDay[e][d]    for e in employees for d in days]
         duration_vars = [durationOfEmployeeDay[e][d] for e in employees for d in days]
 
