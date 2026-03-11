@@ -21,9 +21,9 @@ def main():
     parser.add_argument(
         "--strategy",
         type=str,
-        choices=["custom", "builtin", "hybrid"],
-        default="custom",
-        help="Search strategy: 'custom' (interleaved weighted-random) or 'builtin' (C++ Phase).",
+        choices=["interleaved", "twophase", "impact"],
+        default="impact",
+        help="Search strategy: 'interleaved' (weighted-random, Python), 'twophase' (usingbuilt ins, two-phase), or 'impact' (basically tuning DefaultPhase).",
     )
     args = parser.parse_args()
 
@@ -63,6 +63,12 @@ def main():
                 print(f"  - {v}")
         else:
             print("CHECKER: solution is valid.")
+
+    if is_solution:
+        analysis = instance.analyze_solution(schedule, filename)
+        print(f"ANALYSIS: {len(analysis)} warning(s) emitted to warnings.json")
+        for w in analysis:
+            print(f"  [{w['type']}] {w['message']}")
 
 if __name__ == "__main__":
     main()

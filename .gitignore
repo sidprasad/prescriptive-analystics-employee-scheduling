@@ -10,3 +10,5 @@ build/
 debug_perf.py
 .DS_Store
 *.tmp
+benchmark_results.md
+*.txt

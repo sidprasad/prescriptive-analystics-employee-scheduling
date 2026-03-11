@@ -65,73 +65,33 @@ class InterleavedSelector(pywrapcp.PyDecisionBuilder):
         return solver_.AssignVariableValue(most_constrained_var, chosen)
 
 
-class ShiftOnlySelector(pywrapcp.PyDecisionBuilder):
-    """
-    Custom decision builder for SHIFT variables only.
-
-    Same weighted-random value selection as InterleavedSelector, but only
-    scans shift variables — duration variables are handled by a separate
-    C++ builtin Phase. This cuts the number of Python Next() calls roughly
-    in half, since duration assignments stay entirely in C++.
-
-    Used by the 'hybrid' strategy.
-    """
-
-    def __init__(self, shift_vars, num_shifts):
-        super().__init__()
-        self._shift_vars = list(shift_vars)
-        self._num_shifts = num_shifts
-
-    def Next(self, solver_):
-        # Fail-first scan over shift variables only (smaller list → faster).
-        most_constrained_var = None
-        fewest_choices    = self._num_shifts + 1
-        lowest_domain_min = self._num_shifts + 1
-        for v in self._shift_vars:
-            if v.Bound():
-                continue
-            domain_size = v.Size()
-            domain_min  = v.Min()
-            if domain_size < fewest_choices or (domain_size == fewest_choices and domain_min < lowest_domain_min):
-                most_constrained_var = v
-                fewest_choices    = domain_size
-                lowest_domain_min = domain_min
-
-        if most_constrained_var is None:
-            return None  # all shift vars assigned — hand off to duration phase
-
-        # Weighted-random: deprioritise night (scarce budget), prefer day/evening.
-        shift_weights = [1, 2, 3, 3]   # off, night, day, evening
-        domain  = [s for s in range(self._num_shifts) if most_constrained_var.Contains(s)]
-        weights = [shift_weights[s] for s in domain]
-        chosen  = random.choices(domain, weights=weights, k=1)[0]
-
-        return solver_.AssignVariableValue(most_constrained_var, chosen)
-
-
 def build_search(solver, shift_vars, duration_vars, num_shifts, max_daily_work,
-                 strategy="custom"):
+                 strategy="interleaved"):
     """
     Build a DecisionBuilder for the employee scheduling model.
 
     strategy:
-      "custom"   — InterleavedSelector: single interleaved pool of shift + duration
-                   vars, fail-first variable selection, weighted-random shift values,
-                   max-first duration values. All in Python — smart but slow.
+      "interleaved" — InterleavedSelector: single interleaved pool of shift +
+                   duration vars, fail-first variable selection, weighted-random
+                   shift values, max-first duration values. All in Python —
+                   smart but slow.
 
-      "builtin"  — Pure C++ two-phase: solver.Phase with CHOOSE_MIN_SIZE_LOWEST_MIN
-                   + ASSIGN_RANDOM_VALUE for shifts, then ASSIGN_MAX_VALUE for
-                   durations. Fast but no domain-aware value weighting.
+      "twophase"   — Pure C++ two-phase: solver.Phase with
+                   CHOOSE_MIN_SIZE_LOWEST_MIN + ASSIGN_RANDOM_VALUE for shifts,
+                   then ASSIGN_MAX_VALUE for durations. Fast but no domain-aware
+                   value weighting.
 
-      "hybrid"   — Best of both: Python ShiftOnlySelector (weighted-random, fail-first)
-                   for shifts, then C++ solver.Phase for durations. Cuts Python Next()
-                   calls roughly in half vs custom while keeping the smart shift
-                   value selection.
+      "impact"     — OR-Tools DefaultPhase with tuned parameters
+                   (CHOOSE_MAX_AVERAGE_IMPACT + SELECT_MAX_IMPACT) and a
+                   domain-aware fallback heuristic. Impact-based search learns
+                   which variables/values cause the most propagation; when it
+                   has no strong signal, it falls back to our two-phase builder
+                   that deprioritises night shifts and assigns max durations.
 
     Returns (db, refs) where refs must be kept alive to prevent GC of
     any Python DecisionBuilder (OR-Tools C++ does not prevent it).
     """
-    if strategy == "builtin":
+    if strategy == "twophase":
         phase_shifts = solver.Phase(
             shift_vars,
             solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
@@ -145,17 +105,32 @@ def build_search(solver, shift_vars, duration_vars, num_shifts, max_daily_work,
         db = solver.Compose([phase_shifts, phase_durations])
         return db, [phase_shifts, phase_durations]
 
-    elif strategy == "hybrid":
-        # Python for shifts (weighted-random), C++ for durations (max-first).
-        phase_shifts = ShiftOnlySelector(shift_vars, num_shifts)
-        phase_durations = solver.Phase(
+    elif strategy == "impact":
+        all_vars = list(shift_vars) + list(duration_vars)
+        params = pywrapcp.DefaultPhaseParameters()
+
+        params.var_selection_schema = params.CHOOSE_MAX_AVERAGE_IMPACT
+        params.value_selection_schema = params.SELECT_MAX_IMPACT
+
+        # Fallback heuristic: when impact scores don't differentiate,
+        # DefaultPhase delegates to this builder which encodes our domain
+        # insights — deprioritise night shifts and prefer max durations.
+        fallback_shifts = solver.Phase(
+            shift_vars,
+            solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
+            solver.ASSIGN_RANDOM_VALUE,
+        )
+        fallback_durations = solver.Phase(
             duration_vars,
             solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
             solver.ASSIGN_MAX_VALUE,
         )
-        db = solver.Compose([phase_shifts, phase_durations])
-        return db, [phase_shifts, phase_durations]
+        fallback = solver.Compose([fallback_shifts, fallback_durations])
+        params.decision_builder = fallback
 
-    else:  # "custom"
+        db = solver.DefaultPhase(all_vars, params)
+        return db, [db, fallback, fallback_shifts, fallback_durations]
+
+    else:  # "interleaved"
         db = InterleavedSelector(shift_vars, duration_vars, num_shifts, max_daily_work)
         return db, [db]
