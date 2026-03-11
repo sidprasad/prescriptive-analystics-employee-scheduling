@@ -6,6 +6,8 @@ from typing import Optional, List, Tuple
 import numpy as np
 from ortools.constraint_solver import pywrapcp
 
+from search import build_search
+
 
 
 class CPInstance:
@@ -87,6 +89,7 @@ class CPInstance:
     def solve(
         self,
         time_limit_seconds: Optional[float] = None,
+        strategy: str = "custom",
     ):
         """
         Two primary decision-variable matrices:
@@ -196,19 +199,20 @@ class CPInstance:
 
 
 
-        # Branch on shift variables first (they carry all the structural constraints),
-        # then on duration variables to complete the assignment.
-        all_vars = (
-            [shiftOfEmployeeDay[e][d]    for e in employees for d in days]
-            + [durationOfEmployeeDay[e][d] for e in employees for d in days]
-        )
-        db = solver.Phase(
-            all_vars,
-            solver.CHOOSE_MIN_SIZE_LOWEST_MIN,
-            solver.ASSIGN_RANDOM_VALUE,
-        )
+
+
+        shift_vars    = [shiftOfEmployeeDay[e][d]    for e in employees for d in days]
+        duration_vars = [durationOfEmployeeDay[e][d] for e in employees for d in days]
+
+
+        # Using custom heuristic from 'search' module.
+        db, _search_refs = build_search(solver, shift_vars, duration_vars, self.numShifts, self.maxDailyWork, strategy=strategy)
 
         # Luby restarts with a base unit of 100 failures.
+        # Because the shift selector uses weighted-random value selection,
+        # each restart explores a genuinely different region of the tree.
+        # Earlier, we had a deterministic search strategy, which means 
+        # that these restarts were sort of useless.
         restart = solver.LubyRestart(100)
 
         limits = [restart]

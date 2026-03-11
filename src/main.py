@@ -18,6 +18,13 @@ def main():
         action="store_true",
         help="Verify the solution against all constraints after solving.",
     )
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        choices=["custom", "builtin", "hybrid"],
+        default="custom",
+        help="Search strategy: 'custom' (interleaved weighted-random) or 'builtin' (C++ Phase).",
+    )
     args = parser.parse_args()
 
     input_file = Path(args.input_file)
@@ -26,7 +33,7 @@ def main():
     instance = CPInstance(str(input_file))
     timer = Timer()
     timer.start()
-    is_solution, n_fails, schedule = instance.solve(time_limit_seconds=args.time_limit)
+    is_solution, n_fails, schedule = instance.solve(time_limit_seconds=args.time_limit, strategy=args.strategy)
     timer.stop()
 
     resultdict = {}
@@ -43,9 +50,9 @@ def main():
         resultdict["Solution"] = " ".join(parts)
 
     # Pretty prints solution, uncomment to use
-    # if is_solution:
-    #     instance.prettyPrint(instance.numEmployees, instance.numDays, schedule)
-    #     instance.generateVisualizerInput(instance.numEmployees, instance.numDays, schedule)
+    if is_solution:
+        instance.prettyPrint(instance.numEmployees, instance.numDays, schedule)
+        instance.generateVisualizerInput(instance.numEmployees, instance.numDays, schedule)
     print(json.dumps(resultdict))
 
     if args.check and is_solution:
