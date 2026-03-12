@@ -51,9 +51,9 @@ def main():
         resultdict["Solution"] = " ".join(parts)
 
     # Pretty prints solution, uncomment to use
-    if is_solution:
-        # instance.prettyPrint(instance.numEmployees, instance.numDays, schedule)
-        instance.generateVisualizerInput(instance.numEmployees, instance.numDays, schedule)
+    # if is_solution:
+    #     instance.prettyPrint(instance.numEmployees, instance.numDays, schedule)
+    #     instance.generateVisualizerInput(instance.numEmployees, instance.numDays, schedule)
     print(json.dumps(resultdict))
 
     if args.check and is_solution:
